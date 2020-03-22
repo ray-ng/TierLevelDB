@@ -582,6 +582,7 @@ void DBImpl::CompactMemTable() {
 
   if (s.ok() && shutting_down_.load(std::memory_order_acquire)) {
     s = Status::IOError("Deleting DB during memtable compaction");
+    assert(s.ok());
   }
 
   // Replace immutable memtable with the generated Table
@@ -1340,6 +1341,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
 
   // May temporarily unlock and wait.
   Status status = MakeRoomForWrite(updates == nullptr);
+  assert(status.ok());
   uint64_t last_sequence = versions_->LastSequence();
   Writer* last_writer = &w;
   if (status.ok() && updates != nullptr) {  // nullptr batch is for compactions
@@ -1457,6 +1459,7 @@ Status DBImpl::MakeRoomForWrite(bool force) {
     if (!bg_error_.ok()) {
       // Yield previous error
       s = bg_error_;
+      assert(s.ok());
       break;
     } else if (allow_delay && versions_->NumLevelFiles(0) >=
                                   config::kL0_SlowdownWritesTrigger) {

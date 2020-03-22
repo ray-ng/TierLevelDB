@@ -41,9 +41,9 @@
 //      sstables    -- Print sstable info
 //      heapprofile -- Dump a heap profile (if supported by this port)
 static const char* FLAGS_benchmarks =
-    "fillseq,"
-    "fillsync,"
-    "fillrandom,"
+    // "fillseq,"
+    // "fillsync,"
+    // "fillrandom,"
     "overwrite,"
     "readrandom,"
     "readrandom,"  // Extra run to allow previous compactions to quiesce
@@ -53,7 +53,7 @@ static const char* FLAGS_benchmarks =
     "readrandom,"
     "readseq,"
     "readreverse,"
-    "fill100K,"
+    // "fill100K,"
     "crc32c,"
     "snappycomp,"
     "snappyuncomp,";
@@ -68,7 +68,7 @@ static int FLAGS_reads = -1;
 static int FLAGS_threads = 1;
 
 // Size of each value
-static int FLAGS_value_size = 128;
+static int FLAGS_value_size = 256;
 
 // Arrange to generate values that shrink to this fraction of
 // their original size after compression
