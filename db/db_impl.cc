@@ -778,6 +778,8 @@ void DBImpl::BackgroundCompaction() {
   if (c == nullptr) {
     // Nothing to do
   } else if (c->IsHorizontal()){
+    const uint64_t start_micros = env_->NowMicros();
+    CompactionStats stats;
     std::vector<uint64_t> out_nums;
     SetMetaData smeta;
     FileMetaData meta, vmeta;
@@ -795,6 +797,8 @@ void DBImpl::BackgroundCompaction() {
       {
         mutex_.Unlock();
         status = BuildTable(dbname_, env_, options_, table_cache_, iter, &meta, &vmeta);
+        stats.bytes_read += f->file_size;
+        stats.bytes_written += meta.file_size + vmeta.file_size;
         mutex_.Lock();
       }
       delete iter;
@@ -811,6 +815,8 @@ void DBImpl::BackgroundCompaction() {
         break;
       }
     }
+    stats.micros = env_->NowMicros() - start_micros;
+    stats_[c->level()].Add(stats);
     if (status.ok()) {
       const SetMetaData* tmp_set = c->set_at_idx(0, 0);
       const std::vector<FileMetaData*>& tmp_vlogs = tmp_set->vlog_files;
@@ -1147,9 +1153,14 @@ Status DBImpl::DoCompactionWork(CompactionState* compact, size_t input_idx) {
 
   CompactionStats stats;
   stats.micros = env_->NowMicros() - start_micros - imm_micros;
+  // for (int which = 0; which < 2; which++) {
+  //   for (int i = 0; i < compact->compaction->num_input_files(which); i++) {
+  //     stats.bytes_read += compact->compaction->input(which, i)->total_sst_size;
+  //   }
+  // }
   for (int which = 0; which < 2; which++) {
-    for (int i = 0; i < compact->compaction->num_input_files(which); i++) {
-      stats.bytes_read += compact->compaction->input(which, i)->total_sst_size;
+    for (int i = 0; i < compact->compaction->num_input_files_idx(which, input_idx); i++) {
+      stats.bytes_read += compact->compaction->input_at_idx(input_idx, which, i)->file_size;
     }
   }
   for (size_t i = 0; i < compact->outputs.size(); i++) {

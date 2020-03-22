@@ -311,8 +311,10 @@ static Iterator* GetFileIterator(void* arg, const ReadOptions& options,
     return NewErrorIterator(
         Status::Corruption("FileReader invoked with unexpected value"));
   } else {
-    return cache->NewIterator(options, DecodeFixed64(file_value.data()),
-                              DecodeFixed64(file_value.data() + 8));
+    // return cache->NewIterator(options, DecodeFixed64(file_value.data()),
+    //                           DecodeFixed64(file_value.data() + 8));
+    return NewVLogIterator(cache, options, DecodeFixed64(file_value.data()),
+                                           DecodeFixed64(file_value.data() + 8));
   }
 }
 
@@ -327,8 +329,10 @@ void Version::AddIterators(const ReadOptions& options,
                            std::vector<Iterator*>* iters) {
   // Merge all level zero files together since they may overlap
   for (size_t i = 0; i < files_[0].size(); i++) {
-    iters->push_back(vset_->table_cache_->NewIterator(
-        options, files_[0][i]->number, files_[0][i]->file_size));
+    // iters->push_back(vset_->table_cache_->NewIterator(
+    //     options, files_[0][i]->number, files_[0][i]->file_size));
+    iters->push_back(NewVLogIterator(vset_->table_cache_, options,
+                                     files_[0][i]->number, files_[0][i]->file_size));
   }
 
   // For levels > 0, we can use a concatenating iterator that sequentially
