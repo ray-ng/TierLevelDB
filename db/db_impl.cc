@@ -941,9 +941,11 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
 
   // Check for iterator errors
   Status s = input->status();
+  assert(s.ok());
   const uint64_t current_entries = compact->builder->NumEntries();
   if (s.ok()) {
     s = compact->builder->Finish();
+    assert(s.ok());
   } else {
     compact->builder->Abandon();
   }
@@ -956,9 +958,11 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
   // Finish and check for file errors
   if (s.ok()) {
     s = compact->outfile->Sync();
+    assert(s.ok());
   }
   if (s.ok()) {
     s = compact->outfile->Close();
+    assert(s.ok());
   }
   delete compact->outfile;
   compact->outfile = nullptr;
@@ -968,6 +972,7 @@ Status DBImpl::FinishCompactionOutputFile(CompactionState* compact,
     Iterator* iter =
         table_cache_->NewIterator(ReadOptions(), output_number, current_bytes);
     s = iter->status();
+    assert(s.ok());
     delete iter;
     if (s.ok()) {
       Log(options_.info_log, "Generated table #%llu@%d: %lld keys, %lld bytes",
@@ -1018,6 +1023,7 @@ Status DBImpl::DoCompactionWork(CompactionState* compact, size_t input_idx) {
   }
 
   Iterator* input = versions_->MakeInputIterator(compact->compaction, input_idx);
+  assert(input->status().ok());
 
   // Release mutex while we're actually doing the compaction work
   mutex_.Unlock();
@@ -1106,6 +1112,7 @@ Status DBImpl::DoCompactionWork(CompactionState* compact, size_t input_idx) {
                                           compact->compaction->MaxOutputFileSize()) &&
           current_user_key.compare(last_added_key) != 0 ) {
         status = FinishCompactionOutputFile(compact, input);
+        assert(status.ok());
         if (!status.ok()) {
           break;
         }
@@ -1114,6 +1121,7 @@ Status DBImpl::DoCompactionWork(CompactionState* compact, size_t input_idx) {
 
       if (compact->builder == nullptr) {
         status = OpenCompactionOutputFile(compact);
+        assert(status.ok());
         if (!status.ok()) {
           break;
         }
@@ -1145,9 +1153,11 @@ Status DBImpl::DoCompactionWork(CompactionState* compact, size_t input_idx) {
   }
   if (status.ok() && compact->builder != nullptr) {
     status = FinishCompactionOutputFile(compact, input);
+    assert(status.ok());
   }
   if (status.ok()) {
     status = input->status();
+    assert(status.ok());
   }
   delete input;
   input = nullptr;

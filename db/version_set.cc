@@ -311,8 +311,18 @@ static Iterator* GetFileIterator(void* arg, const ReadOptions& options,
     return NewErrorIterator(
         Status::Corruption("FileReader invoked with unexpected value"));
   } else {
-    // return cache->NewIterator(options, DecodeFixed64(file_value.data()),
-    //                           DecodeFixed64(file_value.data() + 8));
+    return cache->NewIterator(options, DecodeFixed64(file_value.data()),
+                              DecodeFixed64(file_value.data() + 8));
+  }
+}
+
+static Iterator* GetVLogIterator(void* arg, const ReadOptions& options,
+                                 const Slice& file_value) {
+  TableCache* cache = reinterpret_cast<TableCache*>(arg);
+  if (file_value.size() != 16) {
+    return NewErrorIterator(
+        Status::Corruption("FileReader invoked with unexpected value"));
+  } else {
     return NewVLogIterator(cache, options, DecodeFixed64(file_value.data()),
                                            DecodeFixed64(file_value.data() + 8));
   }
@@ -321,7 +331,7 @@ static Iterator* GetFileIterator(void* arg, const ReadOptions& options,
 Iterator* Version::NewConcatenatingIterator(const ReadOptions& options,
                                             int level) const {
   return NewTwoLevelIterator(
-      new LevelFileNumIterator(vset_->icmp_, &files_[level]), &GetFileIterator,
+      new LevelFileNumIterator(vset_->icmp_, &files_[level]), &GetVLogIterator,
       vset_->table_cache_, options);
 }
 
@@ -1579,7 +1589,7 @@ Iterator* VersionSet::MakeInputIterator(Compaction* c, size_t input_idx) {
   Iterator** list = new Iterator*[space];
   int num = 0;
   for (int which = 0; which < 2; which++) {
-    if (!c->inputs_[which].empty()) {
+    if (!c->file_inputs_[input_idx].inputs[which].empty()) {
       if (c->level() + which == 0) {
         const std::vector<FileMetaData*>& files = c->file_inputs_[input_idx].inputs[which];
         for (size_t i = 0; i < files.size(); i++) {
