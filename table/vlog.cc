@@ -58,6 +58,7 @@ Status VLog::InternalGet(const ReadOptions& options, const Slice& ikey,
   uint64_t offset, size, offset_in_block;
   if (!( GetVarint64(&value_addr, &offset) && GetVarint64(&value_addr, &size) &&
          GetVarint64(&value_addr, &offset_in_block) )) {
+    assert(false);
     s = Status::Corruption("bad value address in SSTable");
     return s;
   }
@@ -110,6 +111,7 @@ Status VLog::InternalGet(const ReadOptions& options, const Slice& ikey,
       ReleaseBlock(vlog_block_cache, vlog_cache_handle);
     }
   } else {
+    assert(false);
     s = Status::Corruption("bad block in VLog");
   }
   return s;

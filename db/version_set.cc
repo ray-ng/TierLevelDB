@@ -506,6 +506,7 @@ Status Version::Get(const ReadOptions& options, const LookupKey& k,
   state.saver.value = value;
 
   ForEachOverlapping(state.saver.user_key, state.ikey, &state, &State::Match);
+  assert(state.s.ok());
 
   return state.found ? state.s : Status::NotFound(Slice());
 }
@@ -1669,7 +1670,7 @@ Compaction* VersionSet::PickCompaction() {
     double size0 = static_cast<double>(c->inputs_[0][0]->physical_files.size());
     double size1 = static_cast<double>(c->inputs_[0][0]->vlog_files.size());
     if ((size1 / size0) > config::kSetSizeRatio) {
-      c->is_horizontal = true;
+      c->is_horizontal = false;
     } else {
       c->is_horizontal = false;
     }

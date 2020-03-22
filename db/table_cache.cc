@@ -147,9 +147,11 @@ Status TableCache::Get(const ReadOptions& options, uint64_t file_number,
   Cache::Handle* handle = nullptr;
   std::string ikey_str, v_str;
   Status s = FindTable(file_number, file_size, &handle);
+  assert(s.ok());
   if (s.ok()) {
     Table* t = reinterpret_cast<TableAndFile*>(cache_->Value(handle))->ptr.table;
     s = t->InternalGet(options, k, arg, ikey_str, v_str, handle_result);
+    assert(s.ok());
     cache_->Release(handle);
   }
   if (!s.ok() || ikey_str.size() == 0) {
@@ -157,26 +159,32 @@ Status TableCache::Get(const ReadOptions& options, uint64_t file_number,
   }
   Slice ikey(ikey_str);
   ParsedInternalKey internal_key;
-  ParseInternalKey(ikey, &internal_key);
+  if(!ParseInternalKey(ikey, &internal_key)) {
+    assert(false);
+    return Status::Corruption(Slice());
+  }
   ValueType value_type = internal_key.type;
+  assert(value_type == kTypeAddress);
   if (value_type == kTypeAddress &&
       internal_key.user_key.compare(ExtractUserKey(k)) == 0) {
     Cache::Handle* vlog_handle = nullptr;
     Slice v_addr(v_str);
     uint64_t vfnum;
-    if ( !GetVarint64(&v_addr, &vfnum) ) {
+    if (!GetVarint64(&v_addr, &vfnum)) {
       s = Status::Corruption("bad vlog file number in SSTable");
+      assert(s.ok());
       return s;
     }
     s = FindVLog(vfnum, &vlog_handle);
+    assert(s.ok());
     if (s.ok()) {
       VLog* l = reinterpret_cast<TableAndFile*>(cache_->Value(vlog_handle))->ptr.vlog;
       s = l->InternalGet(options, ikey, v_addr, nullptr, arg, handle_result);
+      assert(s.ok());
       cache_->Release(vlog_handle);
     }
-    return s;
   }
-  return Status::NotFound("No such key");
+  return s;
 }
 
 void TableCache::Evict(uint64_t file_number) {

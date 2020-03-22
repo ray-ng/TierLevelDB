@@ -26,6 +26,7 @@ struct VLogBuilder::Rep {
         file(f),
         offset(0),
         // cur_offset_in_block(0),
+        saved_values_size(0),
         data_block(&options),
         num_entries(0),
         closed(false),
@@ -39,6 +40,7 @@ struct VLogBuilder::Rep {
   VLogBlockBuilder data_block;
   std::vector<InternalKey> saved_keys;
   std::vector<Slice> saved_values;
+  uint64_t saved_values_size;
   std::vector<uint64_t> offsets_in_block;
   std::string last_key;
   int64_t num_entries;
@@ -60,7 +62,7 @@ struct VLogBuilder::Rep {
 };
 
 VLogBuilder::VLogBuilder(const Options& options, WritableFile* file, TableBuilder* builder, uint64_t vfnum) :
-                        rep_(new Rep(options, file)), builder_(builder), vfnum_(vfnum) {}
+                        rep_(new Rep(options, file)), builder_(builder), vfnum_(vfnum), cnt_(0) {}
 
 VLogBuilder::~VLogBuilder() {
   assert(rep_->closed);  // Catch errors where caller forgot to call Finish()
@@ -93,23 +95,27 @@ void VLogBuilder::Add(const Slice& key, const Slice& value) {
     assert(r->data_block.empty());
     assert(r->offsets_in_block.size() + r->saved_values.size() == r->saved_keys.size());
     std::string handle_encoding;
-    for (size_t i = 0, j = 0; i < r->saved_keys.size(); i++) {
+    for (size_t i = 0, j = 0, k = 0; i < r->saved_keys.size(); i++) {
       ParsedInternalKey internal_key;
       ParseInternalKey(r->saved_keys[i].Encode(), &internal_key);
       ValueType value_type = internal_key.type;
       if (value_type == kTypeAddress) {
+        assert(false);
         PutVarint64(&handle_encoding, vfnum_);
         r->pending_handle.EncodeTo(&handle_encoding);
-        PutVarint64(&handle_encoding, r->offsets_in_block[i]);
+        PutVarint64(&handle_encoding, r->offsets_in_block[j]);
         builder_->Add(r->saved_keys[i].Encode(), Slice(handle_encoding));
+        j++;
       } else {
-        assert(j < r->saved_values.size());
-        builder_->Add(r->saved_keys[i].Encode(), r->saved_values[j]);
-        ++j;
+        assert(k < r->saved_values.size());
+        builder_->Add(r->saved_keys[i].Encode(), r->saved_values[k]);
+        k++;
+        cnt_++;
       }
       handle_encoding.clear();
     }
     // r->cur_offset_in_block = 0;
+    r->saved_values_size = 0;
     r->offsets_in_block.clear();
     r->saved_keys.clear();
     r->saved_values.clear();
@@ -118,12 +124,17 @@ void VLogBuilder::Add(const Slice& key, const Slice& value) {
   r->last_key.assign(key.data(), key.size());
   r->num_entries++;
   ParsedInternalKey internal_key;
-  ParseInternalKey(key, &internal_key);
+  if(!ParseInternalKey(key, &internal_key)) {
+    assert(false);
+    return;
+  }
   ValueType value_type = internal_key.type;
   if (value_type == kTypeDeletion || (value_type == kTypeValue && value.size() <= config::kSepSizeGate)) {
     r->saved_keys.emplace_back(internal_key.user_key, internal_key.sequence, internal_key.type);
     r->saved_values.push_back(value);
+    r->saved_values_size += value.size();
   } else {
+    assert(false);
     r->offsets_in_block.push_back(r->data_block.offset());
     r->data_block.Add(key, value);
     // r->cur_offset_in_block += value.size();
@@ -131,7 +142,7 @@ void VLogBuilder::Add(const Slice& key, const Slice& value) {
   }
   const size_t estimated_block_size = r->data_block.CurrentSizeEstimate();
   if (estimated_block_size >= r->options.block_size ||
-      builder_->DataBlockSize() >= builder_->BlockSizeGate()) {
+      r->saved_values_size >= builder_->BlockSizeGate()) {
     Flush();
   }
 }
@@ -143,6 +154,7 @@ void VLogBuilder::Flush() {
   if (r->data_block.empty()) return;
   assert(!r->pending_index_entry);
   WriteBlock(&r->data_block, &r->pending_handle);
+  assert(ok());
   if (ok()) {
     r->pending_index_entry = true;
     r->status = r->file->Flush();
@@ -213,33 +225,41 @@ Status VLogBuilder::Finish() {
   r->closed = true;
   Status s;
 
+  assert(ok());
   if (ok()) {
-    if (r->pending_index_entry) {
-      assert(r->data_block.empty());
-      assert(r->offsets_in_block.size() + r->saved_values.size() == r->saved_keys.size());
-      std::string handle_encoding;
-      for (size_t i = 0, j = 0; i < r->saved_keys.size(); i++) {
-        ParsedInternalKey internal_key;
-        ParseInternalKey(r->saved_keys[i].Encode(), &internal_key);
-        ValueType value_type = internal_key.type;
-        if (value_type == kTypeAddress) {
-          PutVarint64(&handle_encoding, vfnum_);
-          r->pending_handle.EncodeTo(&handle_encoding);
-          PutVarint64(&handle_encoding, r->offsets_in_block[i]);
-          builder_->Add(r->saved_keys[i].Encode(), Slice(handle_encoding));
-        } else {
-          assert(j < r->saved_values.size());
-          builder_->Add(r->saved_keys[i].Encode(), r->saved_values[j]);
-          ++j;
-        }
-        handle_encoding.clear();
+    // if (r->pending_index_entry) {
+    assert(r->data_block.empty());
+    assert(r->offsets_in_block.size() + r->saved_values.size() == r->saved_keys.size());
+    std::string handle_encoding;
+    for (size_t i = 0, j = 0, k = 0; i < r->saved_keys.size(); i++) {
+      ParsedInternalKey internal_key;
+      if(!ParseInternalKey(r->saved_keys[i].Encode(), &internal_key)) {
+        assert(false);
+        return Status::Corruption(Slice());
       }
-      // r->cur_offset_in_block = 0;
-      r->offsets_in_block.clear();
-      r->saved_keys.clear();
-      r->saved_values.clear();
-      r->pending_index_entry = false;
+      ValueType value_type = internal_key.type;
+      if (value_type == kTypeAddress) {
+        assert(false);
+        PutVarint64(&handle_encoding, vfnum_);
+        r->pending_handle.EncodeTo(&handle_encoding);
+        PutVarint64(&handle_encoding, r->offsets_in_block[j]);
+        builder_->Add(r->saved_keys[i].Encode(), Slice(handle_encoding));
+        j++;
+      } else {
+        assert(k < r->saved_values.size());
+        builder_->Add(r->saved_keys[i].Encode(), r->saved_values[k]);
+        k++;
+        cnt_++;
+      }
+      handle_encoding.clear();
     }
+    // r->cur_offset_in_block = 0;
+    r->saved_values_size = 0;
+    r->offsets_in_block.clear();
+    r->saved_keys.clear();
+    r->saved_values.clear();
+    r->pending_index_entry = false;
+    // }
   }
   if (!ok()) {
     return r->status;

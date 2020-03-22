@@ -843,6 +843,7 @@ void DBImpl::BackgroundCompaction() {
     for (size_t input_idx = 0; input_idx < c->InputsSize(); input_idx++) {
       status = DoCompactionWorkWrapper(compact, input_idx, is_manual);
       if (!status.ok()) {
+        assert(false);
         break;
       }
     }
@@ -1106,6 +1107,7 @@ Status DBImpl::DoCompactionWork(CompactionState* compact, size_t input_idx) {
         (int)last_sequence_for_key, (int)compact->smallest_snapshot);
 #endif
 
+    // assert(!drop);
     if (!drop) {
       if (compact->builder != nullptr && (compact->compaction->ShouldStopBefore(key) ||
                                           compact->builder->FileSize() >=
@@ -1282,6 +1284,7 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
       // Done
     } else {
       s = current->Get(options, lkey, value, &stats);
+      // assert(s.ok());
       have_stat_update = true;
     }
     mutex_.Lock();
