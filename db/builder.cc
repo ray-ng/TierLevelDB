@@ -40,9 +40,7 @@ Status BuildTable(const std::string& dbname, Env* env, const Options& options,
     VLogBuilder* vbuilder = new VLogBuilder(options, vfile, builder, vmeta->number);
     vmeta->smallest.DecodeFrom(iter->key());
     meta->smallest.DecodeFrom(iter->key());
-    uint64_t cnt = 0;
     for (; iter->Valid(); iter->Next()) {
-      cnt++;
       Slice key = iter->key();
       vmeta->largest.DecodeFrom(key);
       meta->largest.DecodeFrom(key);
@@ -51,7 +49,6 @@ Status BuildTable(const std::string& dbname, Env* env, const Options& options,
 
     // Finish and check for builder errors
     s = vbuilder->Finish();
-    assert(cnt == vbuilder->cnt_);
     if (s.ok()) {
       meta->file_size = builder->FileSize();
       vmeta->file_size = vbuilder->FileSize();

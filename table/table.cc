@@ -236,11 +236,9 @@ Status Table::InternalGet(const ReadOptions& options, const Slice& k, void* arg,
         ParseInternalKey(tmp_ikey, &internal_key);
         ValueType value_type = internal_key.type;
         if (value_type == kTypeAddress) {
-          assert(false);
           ikey_str.assign(block_iter->key().data(), block_iter->key().size());
           v.assign(block_iter->value().data(), block_iter->value().size());
         } else {
-          // assert(false);
           (*handle_result)(arg, block_iter->key(), block_iter->value());
         }
       }

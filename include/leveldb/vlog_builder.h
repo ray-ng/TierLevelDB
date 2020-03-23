@@ -80,8 +80,6 @@ class LEVELDB_EXPORT VLogBuilder {
   // Finish() call, returns the size of the final generated file.
   uint64_t FileSize() const;
 
-  uint64_t cnt_;
-
  private:
   bool ok() const { return status().ok(); }
   void WriteBlock(VLogBlockBuilder* block, BlockHandle* handle);

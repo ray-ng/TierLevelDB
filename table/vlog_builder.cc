@@ -62,7 +62,7 @@ struct VLogBuilder::Rep {
 };
 
 VLogBuilder::VLogBuilder(const Options& options, WritableFile* file, TableBuilder* builder, uint64_t vfnum) :
-                        rep_(new Rep(options, file)), builder_(builder), vfnum_(vfnum), cnt_(0) {}
+                        rep_(new Rep(options, file)), builder_(builder), vfnum_(vfnum) {}
 
 VLogBuilder::~VLogBuilder() {
   assert(rep_->closed);  // Catch errors where caller forgot to call Finish()
@@ -100,7 +100,7 @@ void VLogBuilder::Add(const Slice& key, const Slice& value) {
       ParseInternalKey(r->saved_keys[i].Encode(), &internal_key);
       ValueType value_type = internal_key.type;
       if (value_type == kTypeAddress) {
-        assert(false);
+        assert(j < r->offsets_in_block.size());
         PutVarint64(&handle_encoding, vfnum_);
         r->pending_handle.EncodeTo(&handle_encoding);
         PutVarint64(&handle_encoding, r->offsets_in_block[j]);
@@ -110,7 +110,6 @@ void VLogBuilder::Add(const Slice& key, const Slice& value) {
         assert(k < r->saved_values.size());
         builder_->Add(r->saved_keys[i].Encode(), r->saved_values[k]);
         k++;
-        cnt_++;
       }
       handle_encoding.clear();
     }
@@ -134,7 +133,6 @@ void VLogBuilder::Add(const Slice& key, const Slice& value) {
     r->saved_values.push_back(value);
     r->saved_values_size += value.size();
   } else {
-    assert(false);
     r->offsets_in_block.push_back(r->data_block.offset());
     r->data_block.Add(key, value);
     // r->cur_offset_in_block += value.size();
@@ -239,7 +237,7 @@ Status VLogBuilder::Finish() {
       }
       ValueType value_type = internal_key.type;
       if (value_type == kTypeAddress) {
-        assert(false);
+        assert(j < r->offsets_in_block.size());
         PutVarint64(&handle_encoding, vfnum_);
         r->pending_handle.EncodeTo(&handle_encoding);
         PutVarint64(&handle_encoding, r->offsets_in_block[j]);
@@ -249,7 +247,6 @@ Status VLogBuilder::Finish() {
         assert(k < r->saved_values.size());
         builder_->Add(r->saved_keys[i].Encode(), r->saved_values[k]);
         k++;
-        cnt_++;
       }
       handle_encoding.clear();
     }

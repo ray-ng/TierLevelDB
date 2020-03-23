@@ -164,7 +164,6 @@ Status TableCache::Get(const ReadOptions& options, uint64_t file_number,
     return Status::Corruption(Slice());
   }
   ValueType value_type = internal_key.type;
-  assert(value_type == kTypeAddress);
   if (value_type == kTypeAddress &&
       internal_key.user_key.compare(ExtractUserKey(k)) == 0) {
     Cache::Handle* vlog_handle = nullptr;

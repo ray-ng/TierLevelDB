@@ -29,7 +29,7 @@ static size_t TargetFileSize(const Options* options) {
 // Maximum bytes of overlaps in grandparent (i.e., level+2) before we
 // stop building a single file in a level->level+1 compaction.
 static int64_t MaxGrandParentOverlapBytes(const Options* options) {
-  return 20 * TargetFileSize(options);
+  return 25 * TargetFileSize(options);
 }
 
 // Maximum number of bytes in all compacted files.  We avoid expanding
@@ -44,9 +44,9 @@ static double MaxBytesForLevel(const Options* options, int level) {
   // the level-0 compaction threshold based on number of files.
 
   // Result for both level-0 and level-1
-  double result = 20. * 1048576.0;
+  double result = 10. * 1048576.0;
   while (level > 1) {
-    result *= 10;
+    result *= 25;
     level--;
   }
   return result;
@@ -377,7 +377,7 @@ static void SaveValue(void* arg, const Slice& ikey, const Slice& v) {
     s->state = kCorrupt;
   } else {
     if (s->ucmp->Compare(parsed_key.user_key, s->user_key) == 0) {
-      s->state = (parsed_key.type == kTypeValue) ? kFound : kDeleted;
+      s->state = (parsed_key.type != kTypeDeletion) ? kFound : kDeleted;
       if (s->state == kFound) {
         s->value->assign(v.data(), v.size());
       }
@@ -1669,8 +1669,9 @@ Compaction* VersionSet::PickCompaction() {
     }
     double size0 = static_cast<double>(c->inputs_[0][0]->physical_files.size());
     double size1 = static_cast<double>(c->inputs_[0][0]->vlog_files.size());
+    // if (c->inputs_[0][0]->physical_files.size() > config::kSetSizeGate) {
     if ((size1 / size0) > config::kSetSizeRatio) {
-      c->is_horizontal = false;
+      c->is_horizontal = true;
     } else {
       c->is_horizontal = false;
     }
