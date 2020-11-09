@@ -111,6 +111,7 @@ configure_file(
 include_directories(
   "${PROJECT_BINARY_DIR}/include"
   "."
+  "/usr/local/include"
 )
 
 if(BUILD_SHARED_LIBS)
