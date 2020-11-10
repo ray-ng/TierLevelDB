@@ -114,6 +114,10 @@ include_directories(
   "/usr/local/include"
 )
 
+link_directories(
+  "/usr/local/lib"
+)
+
 if(BUILD_SHARED_LIBS)
   # Only export LEVELDB_EXPORT symbols from the shared library.
   add_compile_options(-fvisibility=hidden)

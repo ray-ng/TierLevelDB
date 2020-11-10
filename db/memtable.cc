@@ -128,6 +128,9 @@ bool MemTable::Get(const LookupKey& key, std::string* value, Status* s) {
         case kTypeDeletion:
           *s = Status::NotFound(Slice());
           return true;
+        case kTypeAddress:
+          *s = Status::NotSupported(Slice());
+          return false;
       }
     }
   }

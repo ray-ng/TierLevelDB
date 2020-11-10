@@ -189,6 +189,7 @@ void DBIter::FindNextUserEntry(bool skipping, std::string* skip) {
           skipping = true;
           break;
         case kTypeValue:
+        case kTypeAddress:
           if (skipping &&
               user_comparator_->Compare(ikey.user_key, *skip) <= 0) {
             // Entry hidden

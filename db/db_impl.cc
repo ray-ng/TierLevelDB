@@ -725,6 +725,7 @@ void DBImpl::BackgroundCall() {
 
 Status DBImpl::DoCompactionWorkWrapper(CompactionState* compact, 
                                        size_t input_idx, bool is_manual) {
+  mutex_.AssertHeld();
   Status status;
   Compaction* c = compact->compaction;
   if (!is_manual && c->IsTrivialMoveFile(input_idx)) {
@@ -1006,6 +1007,7 @@ Status DBImpl::InstallCompactionResults(CompactionState* compact) {
 }
 
 Status DBImpl::DoCompactionWork(CompactionState* compact, size_t input_idx) {
+  mutex_.AssertHeld();
   const uint64_t start_micros = env_->NowMicros();
   int64_t imm_micros = 0;  // Micros spent doing imm_ compactions
 
