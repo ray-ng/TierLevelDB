@@ -1,231 +1,107 @@
-**LevelDB is a fast key-value storage library written at Google that provides an ordered mapping from string keys to string values.**
+multi version support(value log reclaim just save the latest value in log);
+value log reclaim(need lock read in case that get invalid address; need lock write in case that latest value be overrided);
+GC I/O;
+support vlog compression(less I/O overhead) without additional metadata;
+value log compress(increase cache hit ratio) and memory cache;
+keys no need stored in value log(less reading and writing data, increase cache hit ratio);
+separate gate size;
+decide whether reclaim vLogs according to sstables compaction statics;
+crash consistency algorithm;
+vLogs compression which is vital to column-oriented databases;
+disk I/O has a minimum limitation(set vlog block size equal to this option value, work with compression and cache)
+range query(read-head, vlog compression, cache)
 
-[![Build Status](https://travis-ci.org/google/leveldb.svg?branch=master)](https://travis-ci.org/google/leveldb)
-[![Build status](https://ci.appveyor.com/api/projects/status/g2j5j4rfkda6eyw5/branch/master?svg=true)](https://ci.appveyor.com/project/pwnall/leveldb)
+background: mvcc; snapshot; kv separation
 
-Authors: Sanjay Ghemawat (sanjay@google.com) and Jeff Dean (jeff@google.com)
 
-# Features
+Abstract
 
-  * Keys and values are arbitrary byte arrays.
-  * Data is stored sorted by key.
-  * Callers can provide a custom comparison function to override the sort order.
-  * The basic operations are `Put(key,value)`, `Get(key)`, `Delete(key)`.
-  * Multiple changes can be made in one atomic batch.
-  * Users can create a transient snapshot to get a consistent view of data.
-  * Forward and backward iteration is supported over the data.
-  * Data is automatically compressed using the [Snappy compression library](http://google.github.io/snappy/).
-  * External activity (file system operations etc.) is relayed through a virtual interface so users can customize the operating system interactions.
+Key-value(KV) stores built on the LSM-tree offer excellent write throughput, yet the LSM-tree suffers from high write amplification. KV separation mitigates I/O amplification in LSM-tree by storing keys in the LSM-tree and values in value-logs(vLogs). However, existing KV separation designs remain several flaws which constrain their performance and scope of use. We present TierLevelKV which introduces the notion of assemblies to organize SSTables and vLogs. The KV separation design of TierLevelKV performs garbage collection in vLogs with low I/O overhead and without blocking read or write operations. Meahwhile, TierLevelKV supports vLogs compression and multi-version so as to be used as a storage engine in column-oriented databases.
 
-# Documentation
 
-  [LevelDB library documentation](https://github.com/google/leveldb/blob/master/doc/index.md) is online and bundled with the source code.
+Introduction
 
-# Limitations
+We argue that performance and usage scope of current KV separation designs are constrained due to several flaws. First, garbage collection(GC) operations of current designs just retain the latest value for the same key so multi-version is not considered. Second, GC operations need to block read operations in case they get invalid addresses where storage spaces are reclaimed. Write operations are also needed to be blocked during GC operations in case latest values get covered by previous versions. Third, GC operations need to scan items in the selected vLog to check the validity of KV pairs, leading to high I/O overhead. Fourth, online GC operations require keys also being stored in vLogs, which consume extra I/Os.
 
-  * This is not a SQL database.  It does not have a relational data model, it does not support SQL queries, and it has no support for indexes.
-  * Only a single process (possibly multi-threaded) can access a particular database at a time.
-  * There is no client-server support builtin to the library.  An application that needs such support will have to wrap their own server around the library.
+We propose three complementary innovations to remedy above-mentioned deficiencies. The first innovation we introduce is assemblies and the algorithm of generating assemblies. We use assemblies to organize SSTables and vLogs. One assembly contains several SSTables as well as the vLogs that these SSTables refer to. In addition, each GC operation selects a single assembly to operate on. By this way, multi-version and vLogs compression are supported in our KV separation design. The second innovation is horizontal compaction operation. Our design uses horizontal compaction to perform GC, which brings several advantages. First, GC operations can be performed in an online and asynchronous method which avoids blocking read or write operations. Second, our design eliminates the scans through vLogs for checking the validity of KV pairs so as to reduce I/O overhead. Third, keys are no longer needed in vLogs, leading to less I/O overhead during GC process. The third innovation is the crash consistency mechanism which takes assemblies into consideration and provides the ability of fast recovery.
 
-# Getting the Source
+Combining the three innovations given above forms TierLevelKV, a new KV store built on top of LevelDB. (experiments results)
 
-```bash
-git clone --recurse-submodules https://github.com/google/leveldb.git
-```
+To summarize, this paper makes the following key contributions: (1) the design of TierLevelKV, a KV store built using the above three innovations, (2) a publicly available implementation of TierLevelKV, whose source code address is: (3) an evaluation of its benifits in comparsion to existing KV stores.
 
-# Building
 
-This project supports [CMake](https://cmake.org/) out of the box.
+Background
 
-### Build for POSIX
 
-Quick start:
+Motivation
 
-```bash
-mkdir -p build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release .. && cmake --build .
-```
+While KV separation effectively mitigates write and read amplifications of LSM-tree, we argue that itself cannot achieve high performance due to several flaws of current designs. The reasons are described below.
 
-### Building for Windows
+First, garbage collection(GC) operations of current designs just retain the latest value for the same key so multi-version is not supported. LevelDB supports the multi-version concurrency control(MVCC) mechanism, which means LevelDB can process multiple concurrent read operations based on different versions. However, existing KV separation designs marks the latest version of every key as valid, and reclaims storage spaces from other versions. As a result, KV stores based on existing KV separation designs do not support MVCC mechanism.
 
-First generate the Visual Studio 2017 project/solution files:
+Second, current KV separation designs necessitate GC to scan vLogs to check the validity of KV pairs. For example, When WiscKey performs a GC operation, it reads a chunk of KV pairs from the vLog tail and queries the LSM-tree to see if each KV pair is valid. It then discards the values of invalid KV pairs, and writes back the valid values to the vLog head. Since the keys of the KV pairs may be scattered across the entire LSM-tree, the query overhead is high. For another example, HashKV scans the KV pairs in the value store and constructs a temporary in-memory hash table to check the validity of KV pairs during a GC operation. Besides, HashKV needs to scan all items in the selected vLog otherwise KV pairs written back by GC can cover newer ones. As we can see, the overhead of GC operations becomes substantial under large workloads.
 
-```cmd
-mkdir build
-cd build
-cmake -G "Visual Studio 15" ..
-```
-The default default will build for x86. For 64-bit run:
+Third, multiple concurrent read operations can be processed based on different versions while GC operations just retain the latest version of every key. In case read operations get invalid addresses, GC operations need to wait until all read operations being processed finish. Furthermore, current designs need to block read operations during GC progress. Therefore, current KV separation designs suffer from low read throughput.
 
-```cmd
-cmake -G "Visual Studio 15 Win64" ..
-```
+Forth, LevelDB buffers written KV pairs and flushes them on the device when the buffer gets full. The recently written KV pairs are stored at higher levels. To perform a key lookup, LevelDB searches from high levels to low levels. If KV separation designs do not block write operations during GC progress, the latest value of a key can be covered by the former one written by GC. In case read operations get stale values, current designs need to block write operations during GC progress. Therefore, current KV separation designs suffer from low write throughput.
 
-To compile the Windows solution from the command-line:
+Fifth, current KV separation designs store keys as well as values in vLogs to implement online GC. When WiscKey performs a GC operation, it queries the LSM-tree using the associated key to see if each KV pair is valid. To check the validity of KV pairs during a GC operation, HashKV scans the KV pairs in the value store and constructs a temporary in-memory hash table which is indexed by keys. As we can see, current KV separation designs need to store keys in vLogs, which leads to more I/O overhead.
 
-```cmd
-devenv /build Debug leveldb.sln
-```
 
-or open leveldb.sln in Visual Studio and build from within.
+TierLevelKV Design
 
-Please see the CMake documentation and `CMakeLists.txt` for more advanced usage.
+TierLevelKV is a persistent KV store that minimizes I/O amplification. To realize a high performance KV store atop KV separation, TierLevelKV includes three critical ideas. First, TierLevelKV uses assemblies to organize SSTables and vLogs. Second, TierLevelKV proposes horizontal compaction operation and uses it to perform GC. Third, TierLevelKV utilizes an unique crash-consistency technique to efficiently manage SSTables, vLogs and assemblies.
 
-# Contributing to the leveldb Project
+Assemblies
 
-The leveldb project welcomes contributions. leveldb's primary goal is to be
-a reliable and fast key/value store. Changes that are in line with the
-features/limitations outlined above, and meet the requirements below,
-will be considered.
+Definition of assemblies
 
-Contribution requirements:
+HashKV follows KV separation by storing only keys and metadata in the LSM-tree for indexing KV pairs, while storing values separately in vLogs. Figure # depicts the architecture of TierLevelKV. It organizes SSTables and vLogs into units called assemblies. Figure # shows the structure of an assembly. One assembly contains several SSTables and vLogs. To describe the property of assemblies, we first present three new primitives, Ref(sst, vlog), Lset(sst), Tset(vlog).
 
-1. **Tested platforms only**. We _generally_ will only accept changes for
-   platforms that are compiled and tested. This means POSIX (for Linux and
-   macOS) or Windows. Very small changes will sometimes be accepted, but
-   consider that more of an exception than the rule.
+We first define Ref(s, v), a function describing the relationship between the given SSTable s and vLog v. If SSTable s refers to vLog v, then the function Ref(s, v) will return true. Otherwise, it will return false.
+Definition 1.
+Ref(s, v) := {true, if SSTable s refers to vLog v;
+			 {flase, otherwise.
 
-2. **Stable API**. We strive very hard to maintain a stable API. Changes that
-   require changes for projects using leveldb _might_ be rejected without
-   sufficient benefit to the project.
+Let S be the set of all SSTables in the LSM-tree, and V be the set of all vLogs in the LSM-tree. Then, we formulate Lset(s), a function describing the set of vLogs that the given SSTable s refers to.
+Definition 2.
+Lset(s) := {v |v < V A Ref(s, v)}.
 
-3. **Tests**: All changes must be accompanied by a new (or changed) test, or
-   a sufficient explanation as to why a new (or changed) test is not required.
+We further formulate Tset(v), a function describing the set of SSTables that refer to the given vLog v.
+Definition 3.
+Tset(v) := {s |s < S A Ref(s, v)}.
 
-4. **Consistent Style**: This project conforms to the
-   [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html).
-   To ensure your changes are properly formatted please run:
+Let Sa be the set of SSTables in an arbitrary assembly a, and Va be the set of vLogs in the same assembly. We demand that assembly a maintains the following property:
+Property 1.
+{U Lset(s) |s < Sa} = Va A {U Tset(v) |v < Va} = Sa.
 
-   ```
-   clang-format -i --style=file <file>
-   ```
-
-## Submitting a Pull Request
-
-Before any pull request will be accepted the author must first sign a
-Contributor License Agreement (CLA) at https://cla.developers.google.com/.
-
-In order to keep the commit timeline linear
-[squash](https://git-scm.com/book/en/v2/Git-Tools-Rewriting-History#Squashing-Commits)
-your changes down to a single commit and [rebase](https://git-scm.com/docs/git-rebase)
-on google/leveldb/master. This keeps the commit timeline linear and more easily sync'ed
-with the internal repository at Google. More information at GitHub's
-[About Git rebase](https://help.github.com/articles/about-git-rebase/) page.
-
-# Performance
-
-Here is a performance report (with explanations) from the run of the
-included db_bench program.  The results are somewhat noisy, but should
-be enough to get a ballpark performance estimate.
+As it can be seen by the description of Property 1, for each assembly in the LSM-tree, all vLogs that its SSTables refer to are included in it and all SSTables that refer to its vLogs are also included in it.
 
-## Setup
-
-We use a database with a million entries.  Each entry has a 16 byte
-key, and a 100 byte value.  Values used by the benchmark compress to
-about half their original size.
+Algorithm of generating assemblies
 
-    LevelDB:    version 1.1
-    Date:       Sun May  1 12:11:26 2011
-    CPU:        4 x Intel(R) Core(TM)2 Quad CPU    Q6600  @ 2.40GHz
-    CPUCache:   4096 KB
-    Keys:       16 bytes each
-    Values:     100 bytes each (50 bytes after compression)
-    Entries:    1000000
-    Raw Size:   110.6 MB (estimated)
-    File Size:  62.9 MB (estimated)
+In this section, We first introdue the algorithm to generate assemblies. Then, we prove that TierLevelKV will have each assembly in the LSM-tree maintaining Property 1 by following the algorithm.
 
-## Write performance
+For inserts or updates of KV pairs, TierLevelKV ﬁrst stores the new KV pairs in the memtable. When the memtable gets full, TierLevelKV flushes the values to disk at level L0 as a SSTable and the keys along with the addresses to disk at level L0 as a vLog. Besides, a new assembly is formed of the new SSTable and the new vLog jointly.
 
-The "fill" benchmarks create a brand new database, in either
-sequential, or random order.  The "fillsync" benchmark flushes data
-from the operating system to the disk after every operation; the other
-write operations leave the data sitting in the operating system buffer
-cache for a while.  The "overwrite" benchmark does random writes that
-update existing keys in the database.
+Next, we will prove that TierLevelKV will have each assembly in the LSM-tree maintaining Property 1 by following the algorithm mentioned above.
 
-    fillseq      :       1.765 micros/op;   62.7 MB/s
-    fillsync     :     268.409 micros/op;    0.4 MB/s (10000 ops)
-    fillrandom   :       2.460 micros/op;   45.0 MB/s
-    overwrite    :       2.380 micros/op;   46.5 MB/s
+Horizontal compaction
 
-Each "op" above corresponds to a write of a single key/value pair.
-I.e., a random write benchmark goes at approximately 400,000 writes per second.
+	remove vlog(if necessary) and sstable from assembly
 
-Each "fillsync" operation costs much less (0.3 millisecond)
-than a disk seek (typically 10 milliseconds).  We suspect that this is
-because the hard disk itself is buffering the update in its memory and
-responding before the data has been written to the platter.  This may
-or may not be safe based on whether or not the hard disk has enough
-power to save its memory in the event of a power failure.
+Crash consistency
 
-## Read performance
+	assembly data structure metadata(vmetadata structure), log, recover
 
-We list the performance of reading sequentially in both the forward
-and reverse direction, and also the performance of a random lookup.
-Note that the database created by the benchmark is quite small.
-Therefore the report characterizes the performance of leveldb when the
-working set fits in memory.  The cost of reading a piece of data that
-is not present in the operating system buffer cache will be dominated
-by the one or two disk seeks needed to fetch the data from disk.
-Write performance will be mostly unaffected by whether or not the
-working set fits in memory.
+vLog optimizations
+	vLog compression
+	vLog block cahce
+	selective KV separation
+	no keys stored in vlogs
 
-    readrandom  : 16.677 micros/op;  (approximately 60,000 reads per second)
-    readseq     :  0.476 micros/op;  232.3 MB/s
-    readreverse :  0.724 micros/op;  152.9 MB/s
+Range query
 
-LevelDB compacts its underlying storage data in the background to
-improve read performance.  The results listed above were done
-immediately after a lot of random writes.  The results after
-compactions (which are usually triggered automatically) are better.
+Implementation
 
-    readrandom  : 11.602 micros/op;  (approximately 85,000 reads per second)
-    readseq     :  0.423 micros/op;  261.8 MB/s
-    readreverse :  0.663 micros/op;  166.9 MB/s
 
-Some of the high cost of reads comes from repeated decompression of blocks
-read from disk.  If we supply enough cache to the leveldb so it can hold the
-uncompressed blocks in memory, the read performance improves again:
-
-    readrandom  : 9.775 micros/op;  (approximately 100,000 reads per second before compaction)
-    readrandom  : 5.215 micros/op;  (approximately 190,000 reads per second after compaction)
-
-## Repository contents
-
-See [doc/index.md](doc/index.md) for more explanation. See
-[doc/impl.md](doc/impl.md) for a brief overview of the implementation.
-
-The public interface is in include/leveldb/*.h.  Callers should not include or
-rely on the details of any other header files in this package.  Those
-internal APIs may be changed without warning.
-
-Guide to header files:
-
-* **include/leveldb/db.h**: Main interface to the DB: Start here.
-
-* **include/leveldb/options.h**: Control over the behavior of an entire database,
-and also control over the behavior of individual reads and writes.
-
-* **include/leveldb/comparator.h**: Abstraction for user-specified comparison function.
-If you want just bytewise comparison of keys, you can use the default
-comparator, but clients can write their own comparator implementations if they
-want custom ordering (e.g. to handle different character encodings, etc.).
-
-* **include/leveldb/iterator.h**: Interface for iterating over data. You can get
-an iterator from a DB object.
-
-* **include/leveldb/write_batch.h**: Interface for atomically applying multiple
-updates to a database.
-
-* **include/leveldb/slice.h**: A simple module for maintaining a pointer and a
-length into some other byte array.
-
-* **include/leveldb/status.h**: Status is returned from many of the public interfaces
-and is used to report success and various kinds of errors.
-
-* **include/leveldb/env.h**:
-Abstraction of the OS environment.  A posix implementation of this interface is
-in util/env_posix.cc.
-
-* **include/leveldb/table.h, include/leveldb/table_builder.h**: Lower-level modules that most
-clients probably won't use directly.
+Evaluation
