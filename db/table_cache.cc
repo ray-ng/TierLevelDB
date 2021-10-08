@@ -5,18 +5,19 @@
 #include "db/table_cache.h"
 
 #include "db/filename.h"
+
 #include "leveldb/env.h"
 #include "leveldb/table.h"
 #include "leveldb/vlog.h"
-#include "util/coding.h"
+
 #include "table/iterator_wrapper.h"
+#include "util/coding.h"
 
 namespace leveldb {
 
 struct TableAndFile {
   RandomAccessFile* file;
-  union
-  {
+  union {
     Table* table;
     VLog* vlog;
   } ptr;
@@ -131,7 +132,7 @@ Iterator* TableCache::NewIterator(const ReadOptions& options,
     return NewErrorIterator(s);
   }
 
-  Table* table = reinterpret_cast<TableAndFile*>(cache_->Value(handle))->ptr.table;
+  Table* table = GetTableCached(handle);
   Iterator* result = table->NewIterator(options);
   result->RegisterCleanup(&UnrefEntry, cache_, handle);
   if (tableptr != nullptr) {
@@ -149,7 +150,7 @@ Status TableCache::Get(const ReadOptions& options, uint64_t file_number,
   Status s = FindTable(file_number, file_size, &handle);
   assert(s.ok());
   if (s.ok()) {
-    Table* t = reinterpret_cast<TableAndFile*>(cache_->Value(handle))->ptr.table;
+    Table* t = GetTableCached(handle);
     s = t->InternalGet(options, k, arg, ikey_str, v_str, handle_result);
     assert(s.ok());
     cache_->Release(handle);
@@ -159,7 +160,7 @@ Status TableCache::Get(const ReadOptions& options, uint64_t file_number,
   }
   Slice ikey(ikey_str);
   ParsedInternalKey internal_key;
-  if(!ParseInternalKey(ikey, &internal_key)) {
+  if (!ParseInternalKey(ikey, &internal_key)) {
     assert(false);
     return Status::Corruption(Slice());
   }
@@ -177,7 +178,7 @@ Status TableCache::Get(const ReadOptions& options, uint64_t file_number,
     s = FindVLog(vfnum, &vlog_handle);
     assert(s.ok());
     if (s.ok()) {
-      VLog* l = reinterpret_cast<TableAndFile*>(cache_->Value(vlog_handle))->ptr.vlog;
+      VLog* l = GetVLogCached(vlog_handle);
       s = l->InternalGet(options, ikey, v_addr, nullptr, arg, handle_result);
       assert(s.ok());
       cache_->Release(vlog_handle);
@@ -193,18 +194,22 @@ void TableCache::Evict(uint64_t file_number) {
 }
 
 VLog* TableCache::GetVLogCached(Cache::Handle* vlog_handle) {
-    return reinterpret_cast<TableAndFile*>(cache_->Value(vlog_handle))->ptr.vlog;
+  return reinterpret_cast<TableAndFile*>(cache_->Value(vlog_handle))->ptr.vlog;
+}
+
+Table* TableCache::GetTableCached(Cache::Handle* table_handle) {
+  return reinterpret_cast<TableAndFile*>(cache_->Value(table_handle))
+      ->ptr.table;
 }
 
 class TableCache::VLogIterator : public Iterator {
  public:
-  VLogIterator(TableCache* table_cache, const ReadOptions& options, Iterator* iter):
-      table_cache_(table_cache), table_iter_(iter), options_(options) {}
+  VLogIterator(TableCache* table_cache, const ReadOptions& options,
+               Iterator* iter)
+      : table_cache_(table_cache), table_iter_(iter), options_(options) {}
   ~VLogIterator() = default;
-  void Seek(const Slice& target) override {
-    table_iter_.Seek(target);
-    
-  }
+
+  void Seek(const Slice& target) override { table_iter_.Seek(target); }
   void SeekToFirst() override {
     table_iter_.SeekToFirst();
     if (table_iter_.Valid()) {
@@ -229,7 +234,7 @@ class TableCache::VLogIterator : public Iterator {
       GetValue();
     }
   }
-  bool Valid() const override { 
+  bool Valid() const override {
     if (!table_iter_.Valid()) {
       return table_iter_.Valid();
     }
@@ -250,6 +255,7 @@ class TableCache::VLogIterator : public Iterator {
     }
     return status_;
   }
+
  private:
   IteratorWrapper table_iter_;
   std::string value_str_;

@@ -7,14 +7,14 @@
 #ifndef STORAGE_LEVELDB_DB_TABLE_CACHE_H_
 #define STORAGE_LEVELDB_DB_TABLE_CACHE_H_
 
+#include "db/dbformat.h"
 #include <stdint.h>
-
 #include <string>
 
-#include "db/dbformat.h"
 #include "leveldb/cache.h"
-#include "leveldb/table.h"
 #include "leveldb/iterator.h"
+#include "leveldb/table.h"
+
 #include "port/port.h"
 
 namespace leveldb {
@@ -47,8 +47,11 @@ class TableCache {
   void Evict(uint64_t file_number);
 
   VLog* GetVLogCached(Cache::Handle* vlog_handle);
+  Table* GetTableCached(Cache::Handle* table_handle);
 
-  inline void ReleaseVLogCached(Cache::Handle* vlog_handle) {cache_->Release(vlog_handle);};
+  inline void ReleaseVLogCached(Cache::Handle* vlog_handle) {
+    cache_->Release(vlog_handle);
+  };
 
   class VLogIterator;
 
