@@ -4,17 +4,18 @@
 
 #include "leveldb/vlog_builder.h"
 
+#include "db/dbformat.h"
 #include <assert.h>
 #include <vector>
 
-#include "db/dbformat.h"
 #include "leveldb/comparator.h"
 #include "leveldb/env.h"
 #include "leveldb/filter_policy.h"
 #include "leveldb/options.h"
-#include "table/vlog_block_builder.h"
+
 #include "table/filter_block.h"
 #include "table/format.h"
+#include "table/vlog_block_builder.h"
 #include "util/coding.h"
 #include "util/crc32c.h"
 
@@ -25,7 +26,6 @@ struct VLogBuilder::Rep {
       : options(opt),
         file(f),
         offset(0),
-        // cur_offset_in_block(0),
         saved_values_size(0),
         data_block(&options),
         num_entries(0),
@@ -35,11 +35,10 @@ struct VLogBuilder::Rep {
   Options options;
   WritableFile* file;
   uint64_t offset;
-  // uint64_t cur_offset_in_block;
   Status status;
   VLogBlockBuilder data_block;
   std::vector<InternalKey> saved_keys;
-  std::vector<Slice> saved_values;
+  std::vector<std::string> saved_values;
   uint64_t saved_values_size;
   std::vector<uint64_t> offsets_in_block;
   std::string last_key;
@@ -61,8 +60,9 @@ struct VLogBuilder::Rep {
   std::string compressed_output;
 };
 
-VLogBuilder::VLogBuilder(const Options& options, WritableFile* file, TableBuilder* builder, uint64_t vfnum) :
-                        rep_(new Rep(options, file)), builder_(builder), vfnum_(vfnum) {}
+VLogBuilder::VLogBuilder(const Options& options, WritableFile* file,
+                         TableBuilder* builder, uint64_t vfnum)
+    : rep_(new Rep(options, file)), builder_(builder), vfnum_(vfnum) {}
 
 VLogBuilder::~VLogBuilder() {
   assert(rep_->closed);  // Catch errors where caller forgot to call Finish()
@@ -93,7 +93,8 @@ void VLogBuilder::Add(const Slice& key, const Slice& value) {
 
   if (r->pending_index_entry) {
     assert(r->data_block.empty());
-    assert(r->offsets_in_block.size() + r->saved_values.size() == r->saved_keys.size());
+    assert(r->offsets_in_block.size() + r->saved_values.size() ==
+           r->saved_keys.size());
     std::string handle_encoding;
     for (size_t i = 0, j = 0, k = 0; i < r->saved_keys.size(); i++) {
       ParsedInternalKey internal_key;
@@ -108,12 +109,11 @@ void VLogBuilder::Add(const Slice& key, const Slice& value) {
         j++;
       } else {
         assert(k < r->saved_values.size());
-        builder_->Add(r->saved_keys[i].Encode(), r->saved_values[k]);
+        builder_->Add(r->saved_keys[i].Encode(), Slice(r->saved_values[k]));
         k++;
       }
       handle_encoding.clear();
     }
-    // r->cur_offset_in_block = 0;
     r->saved_values_size = 0;
     r->offsets_in_block.clear();
     r->saved_keys.clear();
@@ -123,20 +123,22 @@ void VLogBuilder::Add(const Slice& key, const Slice& value) {
   r->last_key.assign(key.data(), key.size());
   r->num_entries++;
   ParsedInternalKey internal_key;
-  if(!ParseInternalKey(key, &internal_key)) {
+  if (!ParseInternalKey(key, &internal_key)) {
     assert(false);
     return;
   }
   ValueType value_type = internal_key.type;
-  if (value_type == kTypeDeletion || (value_type == kTypeValue && value.size() <= config::kSepSizeGate)) {
-    r->saved_keys.emplace_back(internal_key.user_key, internal_key.sequence, internal_key.type);
-    r->saved_values.push_back(value);
+  if (value_type == kTypeDeletion ||
+      (value_type == kTypeValue && value.size() <= config::kSepSizeGate)) {
+    r->saved_keys.emplace_back(internal_key.user_key, internal_key.sequence,
+                               internal_key.type);
+    r->saved_values.push_back(value.ToString());
     r->saved_values_size += value.size();
   } else {
     r->offsets_in_block.push_back(r->data_block.offset());
     r->data_block.Add(key, value);
-    // r->cur_offset_in_block += value.size();
-    r->saved_keys.emplace_back(internal_key.user_key, internal_key.sequence, kTypeAddress);
+    r->saved_keys.emplace_back(internal_key.user_key, internal_key.sequence,
+                               kTypeAddress);
   }
   const size_t estimated_block_size = r->data_block.CurrentSizeEstimate();
   if (estimated_block_size >= r->options.block_size ||
@@ -149,7 +151,7 @@ void VLogBuilder::Flush() {
   Rep* r = rep_;
   assert(!r->closed);
   if (!ok()) return;
-  if (r->data_block.empty()) return;
+  // if (r->data_block.empty()) return;
   assert(!r->pending_index_entry);
   WriteBlock(&r->data_block, &r->pending_handle);
   assert(ok());
@@ -167,6 +169,7 @@ void VLogBuilder::WriteBlock(VLogBlockBuilder* block, BlockHandle* handle) {
   assert(ok());
   Rep* r = rep_;
   Slice raw = block->Finish();
+  if (raw.empty()) return;
 
   Slice block_contents;
   CompressionType type = r->options.compression;
@@ -196,10 +199,12 @@ void VLogBuilder::WriteBlock(VLogBlockBuilder* block, BlockHandle* handle) {
 }
 
 void VLogBuilder::WriteRawBlock(const Slice& block_contents,
-                                 CompressionType type, BlockHandle* handle) {
+                                CompressionType type, BlockHandle* handle) {
   Rep* r = rep_;
   handle->set_offset(r->offset);
   handle->set_size(block_contents.size());
+  if (block_contents.empty()) return;
+
   r->status = r->file->Append(block_contents);
   if (r->status.ok()) {
     char trailer[kBlockTrailerSize];
@@ -218,6 +223,7 @@ Status VLogBuilder::status() const { return rep_->status; }
 
 Status VLogBuilder::Finish() {
   Rep* r = rep_;
+  r->pending_index_entry = false;
   Flush();
   assert(!r->closed);
   r->closed = true;
@@ -225,38 +231,38 @@ Status VLogBuilder::Finish() {
 
   assert(ok());
   if (ok()) {
-    // if (r->pending_index_entry) {
     assert(r->data_block.empty());
-    assert(r->offsets_in_block.size() + r->saved_values.size() == r->saved_keys.size());
-    std::string handle_encoding;
-    for (size_t i = 0, j = 0, k = 0; i < r->saved_keys.size(); i++) {
-      ParsedInternalKey internal_key;
-      if(!ParseInternalKey(r->saved_keys[i].Encode(), &internal_key)) {
-        assert(false);
-        return Status::Corruption(Slice());
+    assert(r->offsets_in_block.size() + r->saved_values.size() ==
+           r->saved_keys.size());
+    if (r->pending_index_entry) {
+      std::string handle_encoding;
+      for (size_t i = 0, j = 0, k = 0; i < r->saved_keys.size(); i++) {
+        ParsedInternalKey internal_key;
+        if (!ParseInternalKey(r->saved_keys[i].Encode(), &internal_key)) {
+          assert(false);
+          return Status::Corruption(Slice());
+        }
+        ValueType value_type = internal_key.type;
+        if (value_type == kTypeAddress) {
+          assert(j < r->offsets_in_block.size());
+          PutVarint64(&handle_encoding, vfnum_);
+          r->pending_handle.EncodeTo(&handle_encoding);
+          PutVarint64(&handle_encoding, r->offsets_in_block[j]);
+          builder_->Add(r->saved_keys[i].Encode(), Slice(handle_encoding));
+          j++;
+        } else {
+          assert(k < r->saved_values.size());
+          builder_->Add(r->saved_keys[i].Encode(), Slice(r->saved_values[k]));
+          k++;
+        }
+        handle_encoding.clear();
       }
-      ValueType value_type = internal_key.type;
-      if (value_type == kTypeAddress) {
-        assert(j < r->offsets_in_block.size());
-        PutVarint64(&handle_encoding, vfnum_);
-        r->pending_handle.EncodeTo(&handle_encoding);
-        PutVarint64(&handle_encoding, r->offsets_in_block[j]);
-        builder_->Add(r->saved_keys[i].Encode(), Slice(handle_encoding));
-        j++;
-      } else {
-        assert(k < r->saved_values.size());
-        builder_->Add(r->saved_keys[i].Encode(), r->saved_values[k]);
-        k++;
-      }
-      handle_encoding.clear();
+      r->saved_values_size = 0;
+      r->offsets_in_block.clear();
+      r->saved_keys.clear();
+      r->saved_values.clear();
+      r->pending_index_entry = false;
     }
-    // r->cur_offset_in_block = 0;
-    r->saved_values_size = 0;
-    r->offsets_in_block.clear();
-    r->saved_keys.clear();
-    r->saved_values.clear();
-    r->pending_index_entry = false;
-    // }
   }
   if (!ok()) {
     return r->status;

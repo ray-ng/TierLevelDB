@@ -4,15 +4,6 @@
 
 #include "db/db_impl.h"
 
-#include <stdint.h>
-#include <stdio.h>
-
-#include <algorithm>
-#include <atomic>
-#include <set>
-#include <string>
-#include <vector>
-
 #include "db/builder.h"
 #include "db/db_iter.h"
 #include "db/dbformat.h"
@@ -23,12 +14,21 @@
 #include "db/table_cache.h"
 #include "db/version_set.h"
 #include "db/write_batch_internal.h"
+#include <algorithm>
+#include <atomic>
+#include <set>
+#include <stdint.h>
+#include <stdio.h>
+#include <string>
+#include <vector>
+
 #include "leveldb/db.h"
 #include "leveldb/env.h"
 #include "leveldb/status.h"
 #include "leveldb/table.h"
 #include "leveldb/table_builder.h"
 #include "leveldb/vlog_builder.h"
+
 #include "port/port.h"
 #include "table/block.h"
 #include "table/merger.h"
@@ -557,8 +557,8 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
       }
     }
     edit->AddSet(level, &smeta);
-    edit->AddFile(level, meta.number, meta.file_size,
-                  meta.smallest, meta.largest);
+    edit->AddFile(level, meta.number, meta.file_size, meta.smallest,
+                  meta.largest);
     edit->AddVLog(level, &vmeta);
   }
 
@@ -723,7 +723,7 @@ void DBImpl::BackgroundCall() {
   background_work_finished_signal_.SignalAll();
 }
 
-Status DBImpl::DoCompactionWorkWrapper(CompactionState* compact, 
+Status DBImpl::DoCompactionWorkWrapper(CompactionState* compact,
                                        size_t input_idx, bool is_manual) {
   mutex_.AssertHeld();
   Status status;
@@ -734,7 +734,7 @@ Status DBImpl::DoCompactionWorkWrapper(CompactionState* compact,
     FileMetaData* f = c->input_at_idx(input_idx, 0, 0);
     // c->edit()->RemoveFile(c->level(), f->number);
     c->edit()->AddFile(c->level() + 1, f->number, f->file_size, f->smallest,
-                      f->largest);
+                       f->largest);
     if (!status.ok()) {
       RecordBackgroundError(status);
     }
@@ -757,7 +757,7 @@ void DBImpl::BackgroundCompaction() {
     return;
   }
 
-  Compaction* c;
+  Compaction* c = nullptr;
   bool is_manual = (manual_compaction_ != nullptr);
   InternalKey manual_end;
   if (is_manual) {
@@ -779,7 +779,7 @@ void DBImpl::BackgroundCompaction() {
   Status status;
   if (c == nullptr) {
     // Nothing to do
-  } else if (c->IsHorizontal()){
+  } else if (c->IsHorizontal()) {
     const uint64_t start_micros = env_->NowMicros();
     CompactionStats stats;
     std::vector<uint64_t> out_nums;
@@ -795,10 +795,12 @@ void DBImpl::BackgroundCompaction() {
       pending_outputs_.insert(vmeta.number);
       out_nums.push_back(meta.number);
       out_nums.push_back(vmeta.number);
-      Iterator* iter = NewVLogIterator(table_cache_, ReadOptions(), f->number, f->file_size);
+      Iterator* iter =
+          NewVLogIterator(table_cache_, ReadOptions(), f->number, f->file_size);
       {
         mutex_.Unlock();
-        status = BuildTable(dbname_, env_, options_, table_cache_, iter, &meta, &vmeta);
+        status = BuildTable(dbname_, env_, options_, table_cache_, iter, &meta,
+                            &vmeta);
         stats.bytes_read += f->file_size;
         stats.bytes_written += meta.file_size + vmeta.file_size;
         mutex_.Lock();
@@ -810,7 +812,7 @@ void DBImpl::BackgroundCompaction() {
         smeta.comp_coll_flag |= 0x0001;
         c->edit()->AddSet(c->level(), &smeta);
         c->edit()->AddFile(c->level(), meta.number, meta.file_size,
-                      meta.smallest, meta.largest);
+                           meta.smallest, meta.largest);
         c->edit()->AddVLog(c->level(), &vmeta);
       } else {
         RecordBackgroundError(status);
@@ -835,8 +837,7 @@ void DBImpl::BackgroundCompaction() {
     if (!status.ok()) {
       RecordBackgroundError(status);
     }
-    for (size_t i = 0; i < out_nums.size(); i++)
-    {
+    for (size_t i = 0; i < out_nums.size(); i++) {
       pending_outputs_.erase(out_nums[i]);
     }
   } else {
@@ -863,9 +864,12 @@ void DBImpl::BackgroundCompaction() {
     Log(options_.info_log, "compacted to: %s", versions_->LevelSummary(&tmp));
     CleanupCompaction(compact);
   }
-  c->ReleaseInputs();
-  RemoveObsoleteFiles();
-  delete c;
+
+  if (c != nullptr) {
+    c->ReleaseInputs();
+    RemoveObsoleteFiles();
+    delete c;
+  }
 
   if (status.ok()) {
     // Done
@@ -1025,7 +1029,8 @@ Status DBImpl::DoCompactionWork(CompactionState* compact, size_t input_idx) {
     compact->smallest_snapshot = snapshots_.oldest()->sequence_number();
   }
 
-  Iterator* input = versions_->MakeInputIterator(compact->compaction, input_idx);
+  Iterator* input =
+      versions_->MakeInputIterator(compact->compaction, input_idx);
   assert(input->status().ok());
 
   // Release mutex while we're actually doing the compaction work
@@ -1111,10 +1116,11 @@ Status DBImpl::DoCompactionWork(CompactionState* compact, size_t input_idx) {
 
     // assert(!drop);
     if (!drop) {
-      if (compact->builder != nullptr && (compact->compaction->ShouldStopBefore(key) ||
-                                          compact->builder->FileSize() >=
-                                          compact->compaction->MaxOutputFileSize()) &&
-          current_user_key.compare(last_added_key) != 0 ) {
+      if (compact->builder != nullptr &&
+          (compact->compaction->ShouldStopBefore(key) ||
+           compact->builder->FileSize() >=
+               compact->compaction->MaxOutputFileSize()) &&
+          current_user_key.compare(last_added_key) != 0) {
         status = FinishCompactionOutputFile(compact, input);
         assert(status.ok());
         if (!status.ok()) {
@@ -1140,7 +1146,8 @@ Status DBImpl::DoCompactionWork(CompactionState* compact, size_t input_idx) {
       last_added_key = current_user_key;
 
       // if (compact->smallest.Empty() ||
-      //     internal_comparator_.Compare(key, compact->smallest.Encode()) < 0) {
+      //     internal_comparator_.Compare(key, compact->smallest.Encode()) < 0)
+      //     {
       //   compact->smallest.DecodeFrom(key);
       // }
       // if (compact->largest.Empty() ||
@@ -1170,12 +1177,15 @@ Status DBImpl::DoCompactionWork(CompactionState* compact, size_t input_idx) {
   stats.micros = env_->NowMicros() - start_micros - imm_micros;
   // for (int which = 0; which < 2; which++) {
   //   for (int i = 0; i < compact->compaction->num_input_files(which); i++) {
-  //     stats.bytes_read += compact->compaction->input(which, i)->total_sst_size;
+  //     stats.bytes_read += compact->compaction->input(which,
+  //     i)->total_sst_size;
   //   }
   // }
   for (int which = 0; which < 2; which++) {
-    for (int i = 0; i < compact->compaction->num_input_files_idx(which, input_idx); i++) {
-      stats.bytes_read += compact->compaction->input_at_idx(input_idx, which, i)->file_size;
+    for (int i = 0;
+         i < compact->compaction->num_input_files_idx(which, input_idx); i++) {
+      stats.bytes_read +=
+          compact->compaction->input_at_idx(input_idx, which, i)->file_size;
     }
   }
   for (size_t i = 0; i < compact->outputs.size(); i++) {
