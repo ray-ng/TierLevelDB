@@ -60,7 +60,7 @@ static const char* FLAGS_benchmarks =
     "snappyuncomp,";
 
 // Number of key/values to place in database
-static int FLAGS_num = 100000;
+static int FLAGS_num = 1000000;
 
 // Number of read operations to do.  If negative, do FLAGS_num reads.
 static int FLAGS_reads = -1;
@@ -93,6 +93,10 @@ static int FLAGS_block_size = 0;
 // Number of bytes to use as a cache of uncompressed data.
 // Negative means use default settings.
 static int FLAGS_cache_size = -1;
+
+// Number of bytes to use as a cache of uncompressed data.
+// Negative means use default settings.
+static int FLAGS_vlog_cache_size = -1;
 
 // Maximum number of files to keep open at the same time (use default if == 0)
 static int FLAGS_open_files = 0;
@@ -311,6 +315,7 @@ struct ThreadState {
 class Benchmark {
  private:
   Cache* cache_;
+  Cache* vlog_cache_;
   const FilterPolicy* filter_policy_;
   DB* db_;
   int num_;
@@ -397,6 +402,9 @@ class Benchmark {
  public:
   Benchmark()
       : cache_(FLAGS_cache_size >= 0 ? NewLRUCache(FLAGS_cache_size) : nullptr),
+        vlog_cache_(FLAGS_vlog_cache_size >= 0
+                        ? NewLRUCache(FLAGS_vlog_cache_size)
+                        : nullptr),
         filter_policy_(FLAGS_bloom_bits >= 0
                            ? NewBloomFilterPolicy(FLAGS_bloom_bits)
                            : nullptr),
@@ -421,6 +429,7 @@ class Benchmark {
   ~Benchmark() {
     delete db_;
     delete cache_;
+    delete vlog_cache_;
     delete filter_policy_;
   }
 
@@ -684,6 +693,7 @@ class Benchmark {
     options.env = g_env;
     options.create_if_missing = !FLAGS_use_existing_db;
     options.block_cache = cache_;
+    options.vlog_block_cache = vlog_cache_;
     options.write_buffer_size = FLAGS_write_buffer_size;
     options.max_file_size = FLAGS_max_file_size;
     options.block_size = FLAGS_block_size;

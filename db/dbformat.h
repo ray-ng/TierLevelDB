@@ -15,6 +15,7 @@
 #include "leveldb/slice.h"
 #include "leveldb/table_builder.h"
 #include "leveldb/vlog_builder.h"
+
 #include "util/coding.h"
 #include "util/logging.h"
 
@@ -23,7 +24,7 @@ namespace leveldb {
 // Grouping of constants.  We may want to make some of these
 // parameters set via options.
 namespace config {
-static const size_t kSepSizeGate = 64;
+static const size_t kSepSizeGate = 256;
 
 static const size_t kSetSizeGate = 1;
 
@@ -158,9 +159,7 @@ class InternalKey {
     return rep_;
   }
 
-  bool Empty() const {
-    return rep_.empty();
-  }
+  bool Empty() const { return rep_.empty(); }
 
   Slice user_key() const { return ExtractUserKey(rep_); }
 

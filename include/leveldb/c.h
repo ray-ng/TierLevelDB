@@ -225,6 +225,8 @@ LEVELDB_EXPORT void leveldb_readoptions_set_verify_checksums(
     leveldb_readoptions_t*, uint8_t);
 LEVELDB_EXPORT void leveldb_readoptions_set_fill_cache(leveldb_readoptions_t*,
                                                        uint8_t);
+LEVELDB_EXPORT void leveldb_readoptions_set_fill_vlog_cache(
+    leveldb_readoptions_t*, uint8_t);
 LEVELDB_EXPORT void leveldb_readoptions_set_snapshot(leveldb_readoptions_t*,
                                                      const leveldb_snapshot_t*);
 

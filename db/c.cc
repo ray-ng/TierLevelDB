@@ -503,6 +503,11 @@ void leveldb_readoptions_set_fill_cache(leveldb_readoptions_t* opt, uint8_t v) {
   opt->rep.fill_cache = v;
 }
 
+void leveldb_readoptions_set_fill_vlog_cache(leveldb_readoptions_t* opt,
+                                             uint8_t v) {
+  opt->rep.fill_vlog_cache = v;
+}
+
 void leveldb_readoptions_set_snapshot(leveldb_readoptions_t* opt,
                                       const leveldb_snapshot_t* snap) {
   opt->rep.snapshot = (snap ? snap->rep : nullptr);

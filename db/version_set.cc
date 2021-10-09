@@ -4,17 +4,17 @@
 
 #include "db/version_set.h"
 
-#include <stdio.h>
-
-#include <algorithm>
-
 #include "db/filename.h"
 #include "db/log_reader.h"
 #include "db/log_writer.h"
 #include "db/memtable.h"
 #include "db/table_cache.h"
+#include <algorithm>
+#include <stdio.h>
+
 #include "leveldb/env.h"
 #include "leveldb/table_builder.h"
+
 #include "table/merger.h"
 #include "table/two_level_iterator.h"
 #include "util/coding.h"
@@ -40,17 +40,26 @@ static int64_t ExpandedCompactionByteSizeLimit(const Options* options) {
 }
 
 static double MaxBytesForLevel(const Options* options, int level) {
-  // Note: the result for level zero is not really used since we set
-  // the level-0 compaction threshold based on number of files.
-
-  // Result for both level-0 and level-1
-  double result = 10. * 1048576.0;
-  while (level > 1) {
-    result *= 25;
-    level--;
-  }
-  return result;
+  assert(level < leveldb::config::kNumLevels);
+  static const double bytes[] = {64 * 1048576.0,     128 * 1048576.0,
+                                 512 * 1048576.0,    4096 * 1048576.0,
+                                 32768 * 1048576.0,  262144 * 1048576.0,
+                                 2097152 * 1048576.0};
+  return bytes[level];
 }
+
+// static double MaxBytesForLevel(const Options* options, int level) {
+//   // Note: the result for level zero is not really used since we set
+//   // the level-0 compaction threshold based on number of files.
+
+//   // Result for both level-0 and level-1
+//   double result = 10. * 1048576.0;
+//   while (level > 1) {
+//     result *= 10;
+//     level--;
+//   }
+//   return result;
+// }
 
 static uint64_t MaxFileSizeForLevel(const Options* options, int level) {
   // We could vary per level to reduce number of files?
@@ -130,7 +139,7 @@ int FindFile(const InternalKeyComparator& icmp,
 }
 
 int FindSet(const InternalKeyComparator& icmp,
-             const std::vector<SetMetaData*>& sets, const Slice& key) {
+            const std::vector<SetMetaData*>& sets, const Slice& key) {
   uint32_t left = 0;
   uint32_t right = sets.size();
   while (left < right) {
@@ -164,14 +173,14 @@ static bool BeforeFile(const Comparator* ucmp, const Slice* user_key,
 }
 
 static bool AfterSet(const Comparator* ucmp, const Slice* user_key,
-                      const SetMetaData* f) {
+                     const SetMetaData* f) {
   // null user_key occurs before all keys and is therefore never after *f
   return (user_key != nullptr &&
           ucmp->Compare(*user_key, f->largest.user_key()) > 0);
 }
 
 static bool BeforeSet(const Comparator* ucmp, const Slice* user_key,
-                       const SetMetaData* f) {
+                      const SetMetaData* f) {
   // null user_key occurs after all keys and is therefore never before *f
   return (user_key != nullptr &&
           ucmp->Compare(*user_key, f->smallest.user_key()) < 0);
@@ -215,10 +224,10 @@ bool SomeFileOverlapsRange(const InternalKeyComparator& icmp,
 }
 
 bool SomeSetOverlapsRange(const InternalKeyComparator& icmp,
-                           bool disjoint_sorted_sets,
-                           const std::vector<SetMetaData*>& sets,
-                           const Slice* smallest_user_key,
-                           const Slice* largest_user_key) {
+                          bool disjoint_sorted_sets,
+                          const std::vector<SetMetaData*>& sets,
+                          const Slice* smallest_user_key,
+                          const Slice* largest_user_key) {
   const Comparator* ucmp = icmp.user_comparator();
   if (!disjoint_sorted_sets) {
     // Need to check against all files
@@ -324,7 +333,7 @@ static Iterator* GetVLogIterator(void* arg, const ReadOptions& options,
         Status::Corruption("FileReader invoked with unexpected value"));
   } else {
     return NewVLogIterator(cache, options, DecodeFixed64(file_value.data()),
-                                           DecodeFixed64(file_value.data() + 8));
+                           DecodeFixed64(file_value.data() + 8));
   }
 }
 
@@ -342,7 +351,8 @@ void Version::AddIterators(const ReadOptions& options,
     // iters->push_back(vset_->table_cache_->NewIterator(
     //     options, files_[0][i]->number, files_[0][i]->file_size));
     iters->push_back(NewVLogIterator(vset_->table_cache_, options,
-                                     files_[0][i]->number, files_[0][i]->file_size));
+                                     files_[0][i]->number,
+                                     files_[0][i]->file_size));
   }
 
   // For levels > 0, we can use a concatenating iterator that sequentially
@@ -518,8 +528,10 @@ bool Version::UpdateStats(const GetStats& stats) {
     int level = stats.seek_file_level;
     SetMetaData* s = nullptr;
     for (size_t i = 0; i < sets_[level].size(); i++) {
-      if (ucmp->Compare(f->smallest.user_key(), sets_[level][i]->smallest.user_key()) >= 0 &&
-          ucmp->Compare(f->largest.user_key(), sets_[level][i]->largest.user_key()) <= 0) {
+      if (ucmp->Compare(f->smallest.user_key(),
+                        sets_[level][i]->smallest.user_key()) >= 0 &&
+          ucmp->Compare(f->largest.user_key(),
+                        sets_[level][i]->largest.user_key()) <= 0) {
         s = sets_[level][i];
         break;
       }
@@ -587,7 +599,7 @@ void Version::Unref() {
 bool Version::OverlapInLevel(int level, const Slice* smallest_user_key,
                              const Slice* largest_user_key) {
   return SomeSetOverlapsRange(vset_->icmp_, (level > 0), sets_[level],
-                               smallest_user_key, largest_user_key);
+                              smallest_user_key, largest_user_key);
 }
 
 int Version::PickLevelForMemTableOutput(const Slice& smallest_user_key,
@@ -661,8 +673,8 @@ void Version::GetOverlappingInputs(int level, const InternalKey* begin,
 }
 
 void Version::GetOverlappingSets(int level, const InternalKey* begin,
-                                   const InternalKey* end,
-                                   std::vector<SetMetaData*>* inputs) {
+                                 const InternalKey* end,
+                                 std::vector<SetMetaData*>* inputs) {
   assert(level >= 0);
   assert(level < config::kNumLevels);
   inputs->clear();
@@ -806,18 +818,18 @@ class VersionSet::Builder {
       sets_to_unref.reserve(added_sets->size());
       files_to_unref.reserve(added_files->size());
       vlogs_to_unref.reserve(added_vlogs->size());
-      for (SetSet::const_iterator it = added_sets->begin(); it != added_sets->end();
-           ++it) {
+      for (SetSet::const_iterator it = added_sets->begin();
+           it != added_sets->end(); ++it) {
         sets_to_unref.push_back(*it);
       }
       delete added_sets;
-      for (FileSet::const_iterator it = added_files->begin(); it != added_files->end();
-           ++it) {
+      for (FileSet::const_iterator it = added_files->begin();
+           it != added_files->end(); ++it) {
         files_to_unref.push_back(*it);
       }
       delete added_files;
-      for (FileSet::const_iterator it = added_vlogs->begin(); it != added_vlogs->end();
-           ++it) {
+      for (FileSet::const_iterator it = added_vlogs->begin();
+           it != added_vlogs->end(); ++it) {
         vlogs_to_unref.push_back(*it);
       }
       delete added_vlogs;
@@ -912,14 +924,16 @@ class VersionSet::Builder {
       // Merge the set of added files with the set of pre-existing files.
       // Drop any deleted files.  Store the result in *v.
       const std::vector<FileMetaData*>& base_files = base_->files_[level];
-      std::vector<FileMetaData*>::const_iterator base_files_iter = base_files.begin();
-      std::vector<FileMetaData*>::const_iterator base_files_end = base_files.end();
+      std::vector<FileMetaData*>::const_iterator base_files_iter =
+          base_files.begin();
+      std::vector<FileMetaData*>::const_iterator base_files_end =
+          base_files.end();
       const FileSet* added_files = levels_[level].added_files;
       v->files_[level].reserve(base_files.size() + added_files->size());
       for (const auto& added_file : *added_files) {
         // Add all smaller files listed in base_
-        for (std::vector<FileMetaData*>::const_iterator bpos =
-                 std::upper_bound(base_files_iter, base_files_end, added_file, file_cmp);
+        for (std::vector<FileMetaData*>::const_iterator bpos = std::upper_bound(
+                 base_files_iter, base_files_end, added_file, file_cmp);
              base_files_iter != bpos; ++base_files_iter) {
           MaybeAddFile(v, level, *base_files_iter);
         }
@@ -946,14 +960,16 @@ class VersionSet::Builder {
 #endif
 
       const std::vector<FileMetaData*>& base_vlogs = base_->vlogs_[level];
-      std::vector<FileMetaData*>::const_iterator base_vlogs_iter = base_vlogs.begin();
-      std::vector<FileMetaData*>::const_iterator base_vlogs_end = base_vlogs.end();
+      std::vector<FileMetaData*>::const_iterator base_vlogs_iter =
+          base_vlogs.begin();
+      std::vector<FileMetaData*>::const_iterator base_vlogs_end =
+          base_vlogs.end();
       const FileSet* added_vlogs = levels_[level].added_vlogs;
       v->files_[level].reserve(base_vlogs.size() + added_vlogs->size());
       for (const auto& added_vlog : *added_vlogs) {
         // Add all smaller files listed in base_
-        for (std::vector<FileMetaData*>::const_iterator bpos =
-                 std::upper_bound(base_vlogs_iter, base_vlogs_end, added_vlog, file_cmp);
+        for (std::vector<FileMetaData*>::const_iterator bpos = std::upper_bound(
+                 base_vlogs_iter, base_vlogs_end, added_vlog, file_cmp);
              base_vlogs_iter != bpos; ++base_vlogs_iter) {
           MaybeAddVLog(v, level, *base_vlogs_iter);
         }
@@ -965,7 +981,8 @@ class VersionSet::Builder {
       }
 
       const std::vector<SetMetaData*>& base_sets = base_->sets_[level];
-      std::vector<SetMetaData*>::const_iterator base_sets_iter = base_sets.begin();
+      std::vector<SetMetaData*>::const_iterator base_sets_iter =
+          base_sets.begin();
       std::vector<SetMetaData*>::const_iterator base_sets_end = base_sets.end();
       const SetSet* added_sets = levels_[level].added_sets;
       v->sets_[level].reserve(base_sets.size() + added_sets->size());
@@ -976,8 +993,8 @@ class VersionSet::Builder {
       size_t file_no = 0, vlog_no = 0;
       for (const auto& added_set : *added_sets) {
         // Add all smaller files listed in base_
-        for (std::vector<SetMetaData*>::const_iterator bpos =
-                 std::upper_bound(base_sets_iter, base_sets_end, added_set, set_cmp);
+        for (std::vector<SetMetaData*>::const_iterator bpos = std::upper_bound(
+                 base_sets_iter, base_sets_end, added_set, set_cmp);
              base_sets_iter != bpos; ++base_sets_iter) {
           MaybeAddSet(v, level, *base_sets_iter, false, file_no, vlog_no);
         }
@@ -1006,7 +1023,8 @@ class VersionSet::Builder {
     }
   }
 
-  void MaybeAddSet(Version* v, int level, SetMetaData* f, bool new_set_flag, size_t& file_no, size_t& vlog_no) {
+  void MaybeAddSet(Version* v, int level, SetMetaData* f, bool new_set_flag,
+                   size_t& file_no, size_t& vlog_no) {
     if (levels_[level].deleted_sets.count(f->number) > 0) {
       // File is deleted: do nothing
     } else {
@@ -1021,20 +1039,34 @@ class VersionSet::Builder {
       if (new_set_flag) {
         const Comparator* ucmp = vset_->icmp_.user_comparator();
         if (level != 0) {
-          for (; file_no < files.size() && ucmp->Compare(files[file_no]->largest.user_key(),
-                                                         f->smallest.user_key()) < 0; file_no++) {}
-          for (; file_no < files.size() && ucmp->Compare(files[file_no]->smallest.user_key(),
-                                                         f->largest.user_key()) <= 0; file_no++) {
-            assert(ucmp->Compare(files[file_no]->smallest.user_key(), f->smallest.user_key()) >= 0);
-            assert(ucmp->Compare(files[file_no]->largest.user_key(), f->largest.user_key()) <= 0);
+          for (; file_no < files.size() &&
+                 ucmp->Compare(files[file_no]->largest.user_key(),
+                               f->smallest.user_key()) < 0;
+               file_no++) {
+          }
+          for (; file_no < files.size() &&
+                 ucmp->Compare(files[file_no]->smallest.user_key(),
+                               f->largest.user_key()) <= 0;
+               file_no++) {
+            assert(ucmp->Compare(files[file_no]->smallest.user_key(),
+                                 f->smallest.user_key()) >= 0);
+            assert(ucmp->Compare(files[file_no]->largest.user_key(),
+                                 f->largest.user_key()) <= 0);
             f->AppendPhysicalFile(files[file_no]);
           }
-          for (; vlog_no < vlogs.size() && ucmp->Compare(vlogs[vlog_no]->largest.user_key(),
-                                                         f->smallest.user_key()) < 0; vlog_no++) {}
-          for (; vlog_no < vlogs.size() && ucmp->Compare(vlogs[vlog_no]->smallest.user_key(),
-                                                         f->largest.user_key()) <= 0; vlog_no++) {
-            assert(ucmp->Compare(vlogs[vlog_no]->smallest.user_key(), f->smallest.user_key()) >= 0);
-            assert(ucmp->Compare(vlogs[vlog_no]->largest.user_key(), f->largest.user_key()) <= 0);
+          for (; vlog_no < vlogs.size() &&
+                 ucmp->Compare(vlogs[vlog_no]->largest.user_key(),
+                               f->smallest.user_key()) < 0;
+               vlog_no++) {
+          }
+          for (; vlog_no < vlogs.size() &&
+                 ucmp->Compare(vlogs[vlog_no]->smallest.user_key(),
+                               f->largest.user_key()) <= 0;
+               vlog_no++) {
+            assert(ucmp->Compare(vlogs[vlog_no]->smallest.user_key(),
+                                 f->smallest.user_key()) >= 0);
+            assert(ucmp->Compare(vlogs[vlog_no]->largest.user_key(),
+                                 f->largest.user_key()) <= 0);
             f->AppendVLogFile(vlogs[vlog_no]);
           }
         } else {
@@ -1592,7 +1624,8 @@ Iterator* VersionSet::MakeInputIterator(Compaction* c, size_t input_idx) {
   for (int which = 0; which < 2; which++) {
     if (!c->file_inputs_[input_idx].inputs[which].empty()) {
       if (c->level() + which == 0) {
-        const std::vector<FileMetaData*>& files = c->file_inputs_[input_idx].inputs[which];
+        const std::vector<FileMetaData*>& files =
+            c->file_inputs_[input_idx].inputs[which];
         for (size_t i = 0; i < files.size(); i++) {
           list[num++] = table_cache_->NewIterator(options, files[i]->number,
                                                   files[i]->file_size);
@@ -1600,7 +1633,8 @@ Iterator* VersionSet::MakeInputIterator(Compaction* c, size_t input_idx) {
       } else {
         // Create concatenating iterator for the files from this level
         list[num++] = NewTwoLevelIterator(
-            new Version::LevelFileNumIterator(icmp_, &c->file_inputs_[input_idx].inputs[which]),
+            new Version::LevelFileNumIterator(
+                icmp_, &c->file_inputs_[input_idx].inputs[which]),
             &GetFileIterator, table_cache_, options);
       }
     }
@@ -1729,8 +1763,8 @@ bool FindLargestKey(const InternalKeyComparator& icmp,
 }
 
 bool FindSetLargestKey(const InternalKeyComparator& icmp,
-                    const std::vector<SetMetaData*>& sets,
-                    InternalKey* largest_key) {
+                       const std::vector<SetMetaData*>& sets,
+                       InternalKey* largest_key) {
   if (sets.empty()) {
     return false;
   }
@@ -1826,8 +1860,8 @@ void AddBoundaryInputs(const InternalKeyComparator& icmp,
 }
 
 void AddBoundarySets(const InternalKeyComparator& icmp,
-                       const std::vector<SetMetaData*>& level_sets,
-                       std::vector<SetMetaData*>* compaction_sets) {
+                     const std::vector<SetMetaData*>& level_sets,
+                     std::vector<SetMetaData*>* compaction_sets) {
   InternalKey largest_key;
 
   // Quick return if compaction_files is empty.
@@ -1857,8 +1891,7 @@ void VersionSet::SetupOtherInputSets(Compaction* c) {
   // AddBoundaryInputs(icmp_, current_->sets_[level], &c->inputs_[0]);
   GetRange(c->inputs_[0], &smallest, &largest);
 
-  current_->GetOverlappingSets(level + 1, &smallest, &largest,
-                                 &c->inputs_[1]);
+  current_->GetOverlappingSets(level + 1, &smallest, &largest, &c->inputs_[1]);
 
   // Get entire range covered by compaction
   InternalKey all_start, all_limit;
@@ -1880,7 +1913,7 @@ void VersionSet::SetupOtherInputSets(Compaction* c) {
       GetRange(expanded0, &new_start, &new_limit);
       std::vector<SetMetaData*> expanded1;
       current_->GetOverlappingSets(level + 1, &new_start, &new_limit,
-                                     &expanded1);
+                                   &expanded1);
       if (expanded1.size() == c->inputs_[1].size()) {
         Log(options_->info_log,
             "Expanding@%d %d+%d (%ld+%ld bytes) to %d+%d (%ld+%ld bytes)\n",
@@ -1911,26 +1944,31 @@ void VersionSet::SetupOtherInputSets(Compaction* c) {
   const std::vector<FileMetaData*>& files0 = current_->files_[level];
   const std::vector<FileMetaData*>& files1 = current_->files_[level + 1];
   for (; input0_idx < files0.size(); input0_idx++) {
-    if (user_cmp->Compare(files0[input0_idx]->smallest.user_key(), smallest.user_key()) >= 0 &&
-        user_cmp->Compare(files0[input0_idx]->largest.user_key(), largest.user_key()) <= 0) {
+    if (user_cmp->Compare(files0[input0_idx]->smallest.user_key(),
+                          smallest.user_key()) >= 0 &&
+        user_cmp->Compare(files0[input0_idx]->largest.user_key(),
+                          largest.user_key()) <= 0) {
       if (last_limit.empty() ||
-          user_cmp->Compare(files0[input0_idx]->smallest.user_key(), last_limit) > 0) {
+          user_cmp->Compare(files0[input0_idx]->smallest.user_key(),
+                            last_limit) > 0) {
         c->file_inputs_.emplace_back();
       }
       c->file_inputs_.back().inputs[0].push_back(files0[input0_idx]);
       if (last_limit.empty() ||
-          user_cmp->Compare(files0[input0_idx]->largest.user_key(), last_limit) > 0) {
+          user_cmp->Compare(files0[input0_idx]->largest.user_key(),
+                            last_limit) > 0) {
         last_limit = files0[input0_idx]->largest.user_key();
       }
       for (; input1_idx < files1.size(); input1_idx++) {
         if (user_cmp->Compare(files1[input1_idx]->largest.user_key(),
                               files0[input0_idx]->smallest.user_key()) < 0) {
-
         } else if (user_cmp->Compare(files1[input1_idx]->smallest.user_key(),
-                                     files0[input0_idx]->largest.user_key()) <= 0) {
+                                     files0[input0_idx]->largest.user_key()) <=
+                   0) {
           c->file_inputs_.back().inputs[1].push_back(files1[input1_idx]);
           if (last_limit.empty() ||
-              user_cmp->Compare(files1[input1_idx]->largest.user_key(), last_limit) > 0) {
+              user_cmp->Compare(files1[input1_idx]->largest.user_key(),
+                                last_limit) > 0) {
             last_limit = files1[input1_idx]->largest.user_key();
           }
         } else {
@@ -2032,8 +2070,9 @@ void Compaction::AddInputDeletions(VersionEdit* edit) {
 void Compaction::AddInputFileDeletions(VersionEdit* edit) {
   for (size_t i = 0; i < file_inputs_.size(); i++) {
     for (int which = 0; which < 2; which++) {
-      const std::vector<FileMetaData*>& tmp_physical_files = file_inputs_[i].inputs[which];
-      for (size_t j = 0; j < tmp_physical_files.size(); j++)  {
+      const std::vector<FileMetaData*>& tmp_physical_files =
+          file_inputs_[i].inputs[which];
+      for (size_t j = 0; j < tmp_physical_files.size(); j++) {
         edit->RemoveFile(level_ + which, tmp_physical_files[j]->number);
       }
     }
@@ -2042,11 +2081,11 @@ void Compaction::AddInputFileDeletions(VersionEdit* edit) {
 
 void Compaction::CompactVLogs(VersionEdit* edit) {
   for (size_t i = 0; i < inputs_[0].size(); i++) {
-      const SetMetaData* tmp_set = inputs_[0][i];
-      for (size_t j = 0; j < tmp_set->vlog_files.size(); j++) {
-        edit->DeleteVLog(level_, tmp_set->vlog_files[j]->number);
-        edit->AddVLog(level_ + 1, tmp_set->vlog_files[j]);
-      }
+    const SetMetaData* tmp_set = inputs_[0][i];
+    for (size_t j = 0; j < tmp_set->vlog_files.size(); j++) {
+      edit->DeleteVLog(level_, tmp_set->vlog_files[j]->number);
+      edit->AddVLog(level_ + 1, tmp_set->vlog_files[j]);
+    }
   }
 }
 

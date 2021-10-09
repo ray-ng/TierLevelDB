@@ -85,7 +85,7 @@ Status VLog::InternalGet(const ReadOptions& options, const Slice& ikey,
       s = ReadBlock(rep_->file, options, handle, &contents);
       if (s.ok()) {
         vlog_block = new Block(contents, false);
-        if (contents.cachable && options.fill_cache) {
+        if (contents.cachable && options.fill_vlog_cache) {
           vlog_cache_handle = vlog_block_cache->Insert(
               key, vlog_block, vlog_block->size(), &DeleteCachedBlock);
         }
