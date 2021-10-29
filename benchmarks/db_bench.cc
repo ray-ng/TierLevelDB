@@ -965,6 +965,8 @@ int main(int argc, char** argv) {
       FLAGS_block_size = n;
     } else if (sscanf(argv[i], "--cache_size=%d%c", &n, &junk) == 1) {
       FLAGS_cache_size = n;
+    } else if (sscanf(argv[i], "--vlog_cache_size=%d%c", &n, &junk) == 1) {
+      FLAGS_vlog_cache_size = n;
     } else if (sscanf(argv[i], "--bloom_bits=%d%c", &n, &junk) == 1) {
       FLAGS_bloom_bits = n;
     } else if (sscanf(argv[i], "--open_files=%d%c", &n, &junk) == 1) {
